@@ -14,6 +14,12 @@ export const updateAlertQuantity = (id, alertQuantity) => {
   });
 };
 
+// ✨ 新增：删除饲料库存档案接口
+// 对应我们 Vue 页面中使用的 deleteFeed(row.id)
+export const deleteFeed = (id) => {
+  return request.delete(`/api/inventory/feed/delete/${id}`);
+};
+
 // ========== 饲料出库接口 ==========
 
 export const addFeedStockOut = (data) => {

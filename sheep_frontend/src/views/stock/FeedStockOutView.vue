@@ -158,7 +158,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue' // ✨ 确保引入 watch
 import { useUserStore } from '@/stores/userStore'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
@@ -171,9 +171,11 @@ import {
 } from '@/api/feedInventoryApi'
 import { exportToExcel } from "@/utils/exportUtils.js";
 import useClipboard from "vue-clipboard3";
+import { useAIStore } from "@/stores/aiStore"; // ✨ 引入 AI Store
 
 const { toClipboard } = useClipboard();
 const userStore = useUserStore()
+const aiStore = useAIStore(); // ✨ 初始化 AI Store
 
 const tableData = ref([])
 const inventoryList = ref([])
@@ -222,18 +224,48 @@ const formRules = reactive({
 
 const formatDate = (val) => val ? dayjs(val).format('YYYY-MM-DD HH:mm:ss') : ''
 
-// ✨ 四项联动实时筛选逻辑
+// --- AI 数据同步逻辑 ---
+const syncFeedOutLogsToAI = () => {
+  if (!tableData.value || tableData.value.length === 0) {
+    aiStore.setPageContext('feedOutLogs', "目前暂无饲料出库记录。");
+    return;
+  }
+
+  // 获取最近的 15 条出库记录，并按时间倒序排列
+  const recentLogs = [...tableData.value]
+    .sort((a, b) => new Date(b.deliveryTime) - new Date(a.deliveryTime))
+    .slice(0, 15);
+
+  const summary = recentLogs.map((item, index) => {
+    return [
+      `[记录${index + 1}]`,
+      `时间: ${item.deliveryTime?.split(' ')[0] || '未知'}`,
+      `单号: ${item.outboundNo}`,
+      `名称: ${item.name}(${item.category})`,
+      `厂家: ${item.manufacturer}`,
+      `数量: ${item.num}kg`,
+      `用途/去向: ${item.outPurposes || '未填写'}`,
+      `操作员: ${item.outStaff}`,
+      `备注: ${item.notes || '无'}`
+    ].join(' | ');
+  }).join('\n');
+
+  // ✨ 同步到 aiStore 的 feedOutLogs 模块
+  aiStore.setPageContext('feedOutLogs', summary);
+};
+
+// ✨ 监听数据变化，实现实时同步
+watch(tableData, () => {
+  syncFeedOutLogsToAI();
+}, { deep: true });
+
+// --- 过滤逻辑 ---
 const filteredList = computed(() => {
   return tableData.value.filter(item => {
-    // 关键字匹配 (名称或厂家)
     const matchKeyword = !filterParams.keyword ||
       item.name.toLowerCase().includes(filterParams.keyword.toLowerCase()) ||
       item.manufacturer.toLowerCase().includes(filterParams.keyword.toLowerCase());
-
-    // 类别匹配
     const matchCategory = !filterParams.category || item.category === filterParams.category;
-
-    // 成分类型匹配 (含其他逻辑)
     let matchComponent = true;
     if (filterParams.componentType) {
       if (filterParams.componentType === 'OTHER') {
@@ -242,8 +274,6 @@ const filteredList = computed(() => {
         matchComponent = item.componentType === filterParams.componentType;
       }
     }
-
-    // 日期范围匹配
     let matchDate = true;
     if (filterParams.dateRange && filterParams.dateRange.length === 2) {
       const start = filterParams.dateRange[0];
@@ -320,6 +350,8 @@ const loadStockOutList = async () => {
   try {
     const res = await getFeedStockOutList()
     tableData.value = res.data || res
+    // ✨ 加载成功后立即同步
+    syncFeedOutLogsToAI();
   } catch { ElMessage.error('获取出库列表失败') }
   finally { loading.value = false }
 }

@@ -14,10 +14,6 @@ import java.util.Date;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * 总库存Service实现类 修复点： 1. 所有查询采用 厂家 + 名称 + 类别 的精确匹配 2. syncInventoryFromStockIn
- * 修改返回类型为 BigDecimal，解决调用处的类型不兼容报错
- */
 @Service
 public class HStoreInventoryDrugVaccineServiceImpl implements HStoreInventoryDrugVaccineService {
 
@@ -37,6 +33,18 @@ public class HStoreInventoryDrugVaccineServiceImpl implements HStoreInventoryDru
                 .orElseThrow(() -> new RuntimeException("库存记录不存在"));
         inventory.setAlert(alertQuantity);
         return inventoryRepository.save(inventory);
+    }
+
+    /**
+     * ✨ 新增：删除库存档案实现
+     */
+    @Override
+    @Transactional
+    public void deleteById(Long id) {
+        if (!inventoryRepository.existsById(id)) {
+            throw new RuntimeException("删除失败：库存档案不存在");
+        }
+        inventoryRepository.deleteById(id);
     }
 
     // ==================== 出库操作 ====================
@@ -67,9 +75,6 @@ public class HStoreInventoryDrugVaccineServiceImpl implements HStoreInventoryDru
     }
 
     // ==================== 入库同步操作 ====================
-    /**
-     * 【核心修复】修改返回值为 BigDecimal，以便上层 Service 获取最新库存总量
-     */
     @Override
     @Transactional
     public BigDecimal syncInventoryFromStockIn(DrugVaccineStockIn stockIn) {
@@ -94,12 +99,11 @@ public class HStoreInventoryDrugVaccineServiceImpl implements HStoreInventoryDru
             inventory.setUnitOfMeasure(stockIn.getUnitOfMeasure());
             inventory.setQuantity(stockQty);
 
-            // 计算包含运费的单价
             BigDecimal totalPrice = stockQty.multiply(stockPrice).add(stockFreight);
             inventory.setUnitPrice(totalPrice.divide(stockQty, 2, RoundingMode.HALF_UP));
             inventory.setFDate(new Date());
             inventory.setOutTime(new Date());
-            inventory.setAlert(new BigDecimal("10.00")); // 设置默认警戒线
+            inventory.setAlert(new BigDecimal("10.00"));
         } else {
             inventory = inventoryOpt.get();
             BigDecimal oldQty = inventory.getQuantity();
@@ -108,13 +112,12 @@ public class HStoreInventoryDrugVaccineServiceImpl implements HStoreInventoryDru
             BigDecimal finalQty = oldQty.add(stockQty);
 
             inventory.setQuantity(finalQty);
-            // 更新加权平均单价
             inventory.setUnitPrice(oldTotal.add(newTotal).divide(finalQty, 2, RoundingMode.HALF_UP));
             inventory.setOutTime(new Date());
         }
 
         HStoreInventoryDrugVaccine saved = inventoryRepository.save(inventory);
-        return saved.getQuantity(); // 返回最新库存总量
+        return saved.getQuantity();
     }
 
     // ==================== 更新入库记录同步操作 ====================
@@ -133,19 +136,16 @@ public class HStoreInventoryDrugVaccineServiceImpl implements HStoreInventoryDru
         }
 
         HStoreInventoryDrugVaccine inventory = inventoryOpt.get();
-
-        BigDecimal oldQty = oldStockIn.getStockInQuantity();
-        BigDecimal newQty = newStockIn.getStockInQuantity();
-        BigDecimal diff = newQty.subtract(oldQty);
-
+        BigDecimal diff = newStockIn.getStockInQuantity().subtract(oldStockIn.getStockInQuantity());
         BigDecimal finalQty = inventory.getQuantity().add(diff);
+
         if (finalQty.compareTo(BigDecimal.ZERO) < 0) {
             throw new RuntimeException("调整后的库存数量不能小于0");
         }
 
         inventory.setQuantity(finalQty);
         inventory.setOutTime(new Date());
-        inventory.setUnitPrice(newStockIn.getUnitPrice()); // 更新为最新的单价
+        inventory.setUnitPrice(newStockIn.getUnitPrice());
         inventoryRepository.save(inventory);
     }
 

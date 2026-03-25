@@ -12,7 +12,7 @@
         <el-card class="operation-card">
           <template #header>
             <div class="card-header">
-              <span style="font-weight: bold; font-size: 16px;">🚀 快速操作助手</span>
+              <span style="font-weight: bold; font-size: 16px;">🚀 快速操作助手(注：数据注入AI采取了“按需注入： 只有在您点击需要使用的页面时，系统才会提取该页内容并同步给 AI。”)</span>
             </div>
           </template>
 

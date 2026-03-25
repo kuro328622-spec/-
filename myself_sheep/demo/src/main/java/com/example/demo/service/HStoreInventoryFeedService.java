@@ -15,6 +15,11 @@ public interface HStoreInventoryFeedService {
     HStoreInventoryFeed updateAlertQuantity(Long id, BigDecimal alertQuantity);
 
     /**
+     * ✨ 新增：删除库存记录
+     */
+    void deleteById(Long id);
+
+    /**
      * 出库操作：减少库存
      */
     HStoreInventoryFeed reduceStock(String manufacturer, String name, String category, BigDecimal quantityChange);

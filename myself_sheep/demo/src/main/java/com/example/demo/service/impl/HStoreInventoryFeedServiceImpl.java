@@ -32,16 +32,31 @@ public class HStoreInventoryFeedServiceImpl implements HStoreInventoryFeedServic
         return inventoryRepository.save(inventory);
     }
 
+    /**
+     * ✨ 实现删除逻辑：只有库存数量为 0 时才允许删除档案
+     */
+    @Override
+    @Transactional
+    public void deleteById(Long id) {
+        HStoreInventoryFeed inventory = inventoryRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("删除失败：未找到该库存记录"));
+
+        // 核心校验：quantity 为空或不等于 0 时禁止删除
+        if (inventory.getQuantity() != null && inventory.getQuantity().compareTo(BigDecimal.ZERO) != 0) {
+            throw new RuntimeException("删除失败：当前库存数量为 " + inventory.getQuantity() + "，必须为 0 才能删除档案！");
+        }
+
+        inventoryRepository.deleteById(id);
+    }
+
     @Override
     @Transactional
     public BigDecimal syncInventoryFromStockIn(FeedStockIn stockIn) {
-        // 1. 获取清洗后的四个匹配条件
         String mfg = stockIn.getManufacturer().trim();
         String name = stockIn.getName().trim();
         String cat = stockIn.getCategory().trim();
         String comp = stockIn.getComponentType().trim();
 
-        // 使用四维度查询
         Optional<HStoreInventoryFeed> inventoryOpt = inventoryRepository
                 .findByManufacturerAndNameAndCategoryAndComponentType(mfg, name, cat, comp);
 
@@ -69,7 +84,6 @@ public class HStoreInventoryFeedServiceImpl implements HStoreInventoryFeedServic
     @Override
     @Transactional
     public void syncInventoryOnDelete(FeedStockIn stockIn) {
-        // 使用四维度查询
         HStoreInventoryFeed inventory = inventoryRepository
                 .findByManufacturerAndNameAndCategoryAndComponentType(
                         stockIn.getManufacturer().trim(),
@@ -92,7 +106,6 @@ public class HStoreInventoryFeedServiceImpl implements HStoreInventoryFeedServic
     @Override
     @Transactional
     public void syncInventoryOnUpdate(FeedStockIn oldStockIn, FeedStockIn newStockIn) {
-        // 基于旧的四维度信息定位库存记录
         HStoreInventoryFeed inventory = inventoryRepository
                 .findByManufacturerAndNameAndCategoryAndComponentType(
                         oldStockIn.getManufacturer().trim(),
@@ -117,6 +130,7 @@ public class HStoreInventoryFeedServiceImpl implements HStoreInventoryFeedServic
     @Override
     @Transactional
     public HStoreInventoryFeed reduceStock(String m, String n, String c, BigDecimal q) {
+        // 如果需要实现具体的出库逻辑，可以在此编写
         return null;
     }
 }

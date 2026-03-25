@@ -17,7 +17,7 @@ public class HStoreInventoryDrugVaccineController {
     private HStoreInventoryDrugVaccineService inventoryService;
 
     /**
-     * 获取总库存列表 前端请求: GET /api/inventory/medicine
+     * 获取总库存列表
      */
     @GetMapping
     public List<HStoreInventoryDrugVaccine> getAllInventory() {
@@ -25,7 +25,7 @@ public class HStoreInventoryDrugVaccineController {
     }
 
     /**
-     * 修改库存记录的警戒数量 前端请求: PUT /api/inventory/medicine/{id}/alert?alertQuantity=值
+     * 修改库存记录的警戒数量
      */
     @PutMapping("/{id}/alert")
     public HStoreInventoryDrugVaccine updateAlertQuantity(
@@ -33,5 +33,13 @@ public class HStoreInventoryDrugVaccineController {
             @RequestParam BigDecimal alertQuantity
     ) {
         return inventoryService.updateAlertQuantity(id, alertQuantity);
+    }
+
+    /**
+     * ✨ 新增：删除药品库存档案接口 对应前端：await deleteMedicine(Number(row.id));
+     */
+    @DeleteMapping("/{id}")
+    public void deleteMedicine(@PathVariable Long id) {
+        inventoryService.deleteById(id);
     }
 }

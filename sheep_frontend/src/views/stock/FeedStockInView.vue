@@ -103,8 +103,21 @@
         <el-row :gutter="20">
           <el-col :span="8">
             <el-form-item label="生产厂家" prop="manufacturer">
-              <el-select v-model="formData.manufacturer" placeholder="厂家" :disabled="isEditMode" filterable allow-create default-first-option style="width: 100%">
-                <el-option v-for="item in filteredManufacturers" :key="item.id || item.manufacturerName" :label="item.manufacturerName" :value="item.manufacturerName" />
+              <el-select
+                v-model="formData.manufacturer"
+                placeholder="厂家"
+                :disabled="isEditMode"
+                filterable
+                allow-create
+                default-first-option
+                style="width: 100%"
+              >
+                <el-option
+                  v-for="item in filteredManufacturers"
+                  :key="item.manufacturerName"
+                  :label="item.manufacturerName"
+                  :value="item.manufacturerName"
+                />
               </el-select>
             </el-form-item>
           </el-col>
@@ -203,17 +216,23 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from "vue";
+import { ref, reactive, computed, onMounted, watch } from "vue"; // 确保引入了 watch
 import { useUserStore } from "@/stores/userStore";
 import { ElMessage, ElMessageBox } from "element-plus";
 import dayjs from "dayjs";
 import { getFeedStockInList, addFeedStockIn, updateFeedStockIn, deleteFeedStockIn } from "@/api/feedStockInApi";
-import { getManufacturerList } from "@/api/manufacturerApi";
 import { exportToExcel } from "@/utils/exportUtils.js";
 import useClipboard from "vue-clipboard3";
+import { useAIStore } from "@/stores/aiStore"; // 引入 store
+
+// 引入图标（如果你的 template 中使用了这些图标，取消注释即可）
+// import {
+//   ArrowDown, Plus, Search, Refresh, DocumentCopy, Edit, Delete, Share
+// } from "@element-plus/icons-vue";
 
 const { toClipboard } = useClipboard();
 const userStore = useUserStore();
+const aiStore = useAIStore(); // 初始化 AI Store
 const isAdmin = computed(() => userStore.userInfo?.roles?.includes("ROLE_ADMIN"));
 
 const tableData = ref([]);
@@ -223,7 +242,6 @@ const dialogTitle = ref("添加入库记录");
 const formRef = ref(null);
 const isEditMode = ref(false);
 
-// 预设品种列表，用于判断“其他”
 const presetComponents = ['玉米', '豆粕', '鱼粉', '麸皮'];
 
 const filterParams = reactive({
@@ -244,35 +262,25 @@ const feedHeaderMap = {
   operator: "操作员"
 };
 
+// --- 厂家数据逻辑 ---
 const allManufacturers = ref([]);
-const filteredManufacturers = computed(() => {
-  return allManufacturers.value.filter(item => item.manCategory && item.manCategory.includes("饲料"));
-});
+const filteredManufacturers = computed(() => []); // 保持为空列表
 
-// 核心联动筛选逻辑
+// --- 过滤逻辑 ---
 const filteredList = computed(() => {
   return tableData.value.filter(item => {
-    // 关键字匹配
     const matchKeyword = !filterParams.keyword ||
       item.name.toLowerCase().includes(filterParams.keyword.toLowerCase()) ||
       item.manufacturer.toLowerCase().includes(filterParams.keyword.toLowerCase());
-
-    // 类别匹配
     const matchCategory = !filterParams.category || item.category === filterParams.category;
-
-    // 成分类型匹配 (支持预设品种 + 其他自定义品种)
     let matchComponent = true;
     if (filterParams.componentType) {
       if (filterParams.componentType === 'OTHER') {
-        // 选择“其他”，匹配所有不在预设数组里的值
         matchComponent = !presetComponents.includes(item.componentType);
       } else {
-        // 选择具体品种，精确匹配
         matchComponent = item.componentType === filterParams.componentType;
       }
     }
-
-    // 日期范围匹配
     let matchDate = true;
     if (filterParams.dateRange && filterParams.dateRange.length === 2) {
       const start = filterParams.dateRange[0];
@@ -291,10 +299,108 @@ const resetFilter = () => {
   filterParams.componentType = "";
 };
 
+// --- AI 数据同步逻辑 (核心修改点) ---
+const syncFeedInLogsToAI = () => {
+  if (!tableData.value || tableData.value.length === 0) {
+    aiStore.setPageContext('feedInLogs', "目前暂无饲料入库记录数据。");
+    return;
+  }
+
+  // 获取最近的 15 条入库数据进行深度分析
+  const recentLogs = [...tableData.value]
+    .sort((a, b) => new Date(b.stockInTime) - new Date(a.stockInTime)) // 确保按时间倒序
+    .slice(0, 15);
+
+  const summary = recentLogs.map((item, index) => {
+    return [
+      `[记录${index + 1}]`,
+      `时间: ${item.stockInTime?.split(' ')[0] || '未知'}`,
+      `名称: ${item.name}(${item.category})`,
+      `厂家: ${item.manufacturer}`,
+      `成分: ${item.componentType}`,
+      `量价: ${item.stockInQuantity}kg | 单价:${item.unitPrice}元 | 运费:${item.freightFee}元 | 总价:${item.totalPrice}元`,
+      `品质: 水分:${item.waterContent}% | 霉变:${item.mildew}% | 杂质:${item.impurityContent}%`,
+      `批次: 生产日期:${item.productionDate} | 到期:${item.expirationDate}`,
+      `说明: ${item.usage || '无'}`
+    ].join(' | ');
+  }).join('\n');
+
+  aiStore.setPageContext('feedInLogs', summary);
+};
+
+// ✨ 新增：监听数据变化，确保添加、修改、删除后 AI 同步更新
+watch(tableData, () => {
+  syncFeedInLogsToAI();
+}, { deep: true });
+
+// --- 数据加载逻辑 ---
+const loadStockInList = async () => {
+  loading.value = true;
+  try {
+    const res = await getFeedStockInList();
+    tableData.value = res.data || res || [];
+    // ✨ 修改：获取列表后手动同步一次
+    syncFeedInLogsToAI();
+  } catch {
+    ElMessage.error("列表加载失败");
+  } finally {
+    loading.value = false;
+  }
+};
+
+const loadManufacturers = async () => {
+  allManufacturers.value = [];
+};
+
+// --- 操作函数 ---
+const openAddDialog = () => {
+  isEditMode.value = false;
+  dialogTitle.value = "添加入库记录";
+  resetForm();
+  formData.operator = userStore.userInfo?.username || 'admin';
+  dialogVisible.value = true;
+};
+
+const handleEdit = (row) => {
+  if (!isAdmin.value) return ElMessage.error("无权限");
+  isEditMode.value = true;
+  dialogTitle.value = "编辑入库记录";
+  Object.assign(formData, { ...row });
+  dialogVisible.value = true;
+};
+
+const submitForm = async () => {
+  if (!formRef.value) return;
+  await formRef.value.validate(async (valid) => {
+    if (valid) {
+      loading.value = true;
+      try {
+        const payload = { ...formData, mildew: String(formData.mildew || 0) };
+        if (isEditMode.value) await updateFeedStockIn(formData.id, payload);
+        else await addFeedStockIn(payload);
+        ElMessage.success("操作成功");
+        dialogVisible.value = false;
+        loadStockInList(); // 这里会重新加载列表并触发 watch 同步
+      } finally {
+        loading.value = false;
+      }
+    }
+  });
+};
+
+const handleDelete = (row) => {
+  if (!isAdmin.value) return ElMessage.error("无权限");
+  ElMessageBox.confirm("确定删除吗？", "警告", { type: "warning" }).then(async () => {
+    await deleteFeedStockIn(row.id);
+    ElMessage.success("删除成功");
+    loadStockInList();
+  });
+};
+
+// --- 复制与导出函数 ---
 const handleExportCommand = async (command) => {
   const activeData = filteredList.value;
   if (activeData.length === 0) return ElMessage.warning("没有可导出的数据");
-
   if (command === 'excel') {
     exportToExcel(activeData, feedHeaderMap, "饲料入库记录");
   } else if (command === 'copy_simple') {
@@ -360,6 +466,7 @@ const handleCopyRow = async (row) => {
   } catch { ElMessage.error("复制失败"); }
 };
 
+// --- 表单初始状态 ---
 const formData = reactive({
   id: null, manufacturer: "", name: "", category: "", componentType: "", usage: "",
   productionDate: null, expirationDate: null, nutrients: "", waterContent: 0,
@@ -377,56 +484,6 @@ const formRules = {
   unitPrice: [{ required: true, message: "必填", trigger: "blur" }]
 };
 
-const loadStockInList = async () => {
-  loading.value = true;
-  try {
-    const res = await getFeedStockInList();
-    tableData.value = res.data || res || [];
-  } catch { ElMessage.error("列表加载失败"); }
-  finally { loading.value = false; }
-};
-
-const loadManufacturers = async () => {
-  try {
-    const res = await getManufacturerList();
-    allManufacturers.value = res.data || [];
-  } catch (err) { console.error(err); }
-};
-
-const openAddDialog = () => {
-  isEditMode.value = false; dialogTitle.value = "添加入库记录";
-  resetForm(); formData.operator = userStore.userInfo?.username || 'admin';
-  dialogVisible.value = true;
-};
-
-const handleEdit = (row) => {
-  if (!isAdmin.value) return ElMessage.error("无权限");
-  isEditMode.value = true; dialogTitle.value = "编辑入库记录";
-  Object.assign(formData, { ...row }); dialogVisible.value = true;
-};
-
-const submitForm = async () => {
-  if (!formRef.value) return;
-  await formRef.value.validate(async (valid) => {
-    if (valid) {
-      loading.value = true;
-      try {
-        const payload = { ...formData, mildew: String(formData.mildew || 0) };
-        if (isEditMode.value) await updateFeedStockIn(formData.id, payload);
-        else await addFeedStockIn(payload);
-        ElMessage.success("操作成功"); dialogVisible.value = false; loadStockInList();
-      } finally { loading.value = false; }
-    }
-  });
-};
-
-const handleDelete = (row) => {
-  if (!isAdmin.value) return ElMessage.error("无权限");
-  ElMessageBox.confirm("确定删除吗？", "警告", { type: "warning" }).then(async () => {
-    await deleteFeedStockIn(row.id); ElMessage.success("删除成功"); loadStockInList();
-  });
-};
-
 const resetForm = () => {
   if (formRef.value) formRef.value.resetFields();
   Object.assign(formData, {
@@ -437,7 +494,10 @@ const resetForm = () => {
   });
 };
 
-onMounted(() => { loadStockInList(); loadManufacturers(); });
+onMounted(() => {
+  loadStockInList();
+  loadManufacturers();
+});
 </script>
 
 <style scoped>

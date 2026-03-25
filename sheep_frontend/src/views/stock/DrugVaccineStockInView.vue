@@ -342,6 +342,7 @@
           <el-input
             v-model="formData.unit_of_measure"
             placeholder="如：瓶、盒、支"
+            :disabled="isEditMode"
           />
         </el-form-item>
         <el-form-item
@@ -430,7 +431,9 @@ import { getManufacturerList } from "@/api/manufacturerApi";
 // 修改点 4: 引入导出和剪贴板工具
 import { exportToExcel } from "@/utils/exportUtils.js";
 import useClipboard from "vue-clipboard3";
-
+// 引入 AI 存储桶
+import { useAIStore } from '@/stores/aiStore';
+const aiStore = useAIStore();
 const { toClipboard } = useClipboard();
 const userStore = useUserStore();
 
@@ -787,9 +790,47 @@ const loadStockInList = async () => {
   }
 };
 
-onMounted(() => {
-  loadStockInList();
+// --- AI 注入逻辑开始 ---
+const syncMedicineLogsToAI = () => {
+  if (!tableData.value || tableData.value.length === 0) {
+    aiStore.setPageContext('medicineInLogs', "目前系统暂无任何药品或疫苗的入库流水记录。");
+    return;
+  }
+
+  // 提取最近 15 条完整记录
+  const recentLogs = tableData.value.slice(0, 15);
+  const summary = recentLogs.map((item, index) => {
+    // 格式化日期显示
+    const stockDate = item.stockInTime ? item.stockInTime.replace('T', ' ').split('.')[0] : '未知';
+    const prodDate = item.productionDate ? item.productionDate.split('T')[0] : '未标注';
+    const expDate = item.expirationDate ? item.expirationDate.split('T')[0] : '未标注';
+
+    // 拼接全字段详细信息
+    return `[记录${index + 1}]
+    - 入库时间: ${stockDate}
+    - 厂家: ${item.manufacturer} | 品名: ${item.name} | 类别: ${item.category}
+    - 规格: 数量 ${item.stockInQuantity}${item.unitOfMeasure} | 批号: ${item.productionBatch}
+    - 质量: 生产日期 ${prodDate} | 有效期至 ${expDate}
+    - 详情: 成分类型 ${item.componentType || '通用'} | 用途: ${item.usage || '未填写'}
+    - 财务: 单价 ${item.unitPrice}元 | 总价 ${item.totalPrice}元 | 运费 ${item.freightFee || 0}元
+    - 操作员: ${item.operator}`;
+  }).join('\n\n'); // 用双换行分隔，方便 AI 阅读
+
+  aiStore.setPageContext('medicineInLogs', summary);
+};
+
+// 开启深度监听：一旦表格数据变动（增删改），立即更新 AI 的记忆
+watch(tableData, () => {
+  syncMedicineLogsToAI();
+}, { deep: true });
+// --- AI 注入逻辑结束 ---
+
+onMounted(async () => {
+  await loadStockInList(); // 确保这一行带 await，先拿数据
   loadManufacturers();
+
+  // ✨ 在这里调用同步函数
+  syncMedicineLogsToAI();
 });
 </script>
 

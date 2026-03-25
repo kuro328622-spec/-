@@ -181,7 +181,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue' // 增加了 computed
+import { ref, reactive, onMounted, computed, watch } from 'vue' // 增加了 computed
 import { useUserStore } from '@/stores/userStore'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
@@ -197,7 +197,9 @@ import * as MedicineApi from '@/api/medicineApi.js'
 // 修改点 4: 引入导出工具
 import { exportToExcel } from '@/utils/exportUtils.js'
 import useClipboard from 'vue-clipboard3'
-
+// ✨ 1. 引入 AI Store
+import { useAIStore } from '@/stores/aiStore';
+const aiStore = useAIStore();
 const { toClipboard } = useClipboard()
 const getInventory = MedicineApi.getInventoryList || MedicineApi.getMedicineList
 
@@ -481,9 +483,41 @@ const resetForm = () => {
   })
 }
 
-onMounted(() => {
-  loadStockOutList()
-})
+// ✨ 2. AI 出库数据同步逻辑
+const syncOutboundLogsToAI = () => {
+  if (!tableData.value || tableData.value.length === 0) {
+    aiStore.setPageContext('medicineOutLogs', "暂无药品疫苗出库记录。");
+    return;
+  }
+
+  // 取最近 15 条出库流水
+  const recentLogs = tableData.value.slice(0, 15);
+  const summary = recentLogs.map((item, index) => {
+    const date = item.deliveryTime ? dayjs(item.deliveryTime).format('YYYY-MM-DD HH:mm') : '未知时间';
+    return `[出库记录${index + 1}]
+    - 时间: ${date}
+    - 单号: ${item.outboundNo}
+    - 品名: ${item.name} (${item.category})
+    - 厂家: ${item.manufacturer}
+    - 数量: ${item.num}
+    - 用途: ${item.outPurposes || '未注明'}
+    - 备注: ${item.notes || '无'}
+    - 操作员: ${item.outStaff}`;
+  }).join('\n\n');
+
+  aiStore.setPageContext('medicineOutLogs', summary);
+};
+
+// 开启深度监听，确保出库、删除、编辑后 AI 记忆同步
+watch(tableData, () => {
+  syncOutboundLogsToAI();
+}, { deep: true });
+
+onMounted(async () => {
+  await loadStockOutList(); // 确保用了 await，拿到数据再同步
+  // ✨ 3. 初始化同步
+  syncOutboundLogsToAI();
+});
 </script>
 
 <style scoped>

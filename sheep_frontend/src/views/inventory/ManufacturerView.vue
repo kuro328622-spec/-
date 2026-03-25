@@ -147,13 +147,17 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed } from "vue";
+import { ref, reactive, onMounted, computed, watch } from "vue";
 import { useUserStore } from "@/stores/userStore";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { getManufacturerList, addManufacturer, updateManufacturer, deleteManufacturer } from "@/api/manufacturerApi";
 import { exportToExcel, formatRecordToText } from "@/utils/exportUtils.js";
 import useClipboard from 'vue-clipboard3';
 
+// ✨ AI 接入核心：引入 Store
+import { useAIStore } from '@/stores/aiStore';
+
+const aiStore = useAIStore();
 const { toClipboard } = useClipboard();
 const userStore = useUserStore();
 const tableData = ref([]);
@@ -164,13 +168,39 @@ const formRef = ref(null);
 const isEditMode = ref(false);
 const SORT_ORDER = ['药品', '疫苗', '饲料', '其他'];
 
-// 🔍 筛选参数：类别改为数组以支持多选
+// --- AI 注入功能 ---
+
+/**
+ * 将供应商列表同步到 AI 全局上下文
+ */
+const syncVendorsToAI = () => {
+  if (!tableData.value || tableData.value.length === 0) {
+    aiStore.setPageContext('vendorStats', "目前系统暂无任何供应商或厂家档案记录。");
+    return;
+  }
+
+  // 格式化数据，使 AI 能够清晰识别厂家与其供应品类及联系方式
+  const summary = tableData.value.map((item, index) => {
+    const cats = item.manCategory ? item.manCategory.replace(/,/g, '、') : '未标注品类';
+    return `[供应商 ${index + 1}] 名称：${item.manufacturerName} | 供应类别：${cats} | 联系人：${item.manContactPerson} | 电话：${item.manContactPhone}${item.manRemark ? ' | 备注：' + item.manRemark : ''}`;
+  }).join('\n');
+
+  // 注入到 aiStore 的 vendorStats 模块中
+  aiStore.setPageContext('vendorStats', summary);
+};
+
+// 监听表格数据变化，确保 AI 记忆实时更新
+watch(tableData, () => {
+  syncVendorsToAI();
+}, { deep: true });
+
+// --- 业务逻辑 ---
+
 const filterParams = reactive({
   keyword: '',
   category: []
 });
 
-// 📋 表头映射
 const vendorHeaderMap = {
   manufacturerName: "供应商名称",
   manCategory: "供应类别",
@@ -181,14 +211,11 @@ const vendorHeaderMap = {
   manRemark: "备注"
 };
 
-// ✨ 计算属性：核心筛选逻辑（支持多选匹配）
 const filteredList = computed(() => {
   return tableData.value.filter(item => {
-    // 1. 名称搜索
     const matchKeyword = !filterParams.keyword ||
       item.manufacturerName.toLowerCase().includes(filterParams.keyword.toLowerCase());
 
-    // 2. 类别多选过滤（OR 逻辑：包含选中的任一类别即显示）
     let matchCategory = true;
     if (filterParams.category && filterParams.category.length > 0) {
       const itemCats = item.manCategory ? item.manCategory.split(',') : [];
@@ -204,7 +231,6 @@ const resetFilter = () => {
   filterParams.category = [];
 };
 
-// 🚀 导出/复制功能
 const handleExportCommand = async (command) => {
   const activeData = filteredList.value;
   if (activeData.length === 0) return ElMessage.warning("当前筛选条件下无数据");
@@ -219,15 +245,10 @@ const handleExportCommand = async (command) => {
       text += `--------------------------\n`;
 
       activeData.forEach((item, index) => {
-        // ✨ 修复：使用源代码中的正确字段 manCategory 和 manRemark
         text += `${index + 1}. 【供应商名称】${item.manufacturerName}\n`;
         text += `   【联系信息】联系人：${item.manContactPerson} | 电话：${item.manContactPhone}\n`;
-
-        // ✨ 修复：将数据库中的 "饲料,药品" 格式处理为 AI 更易读的格式
         const categoryDisplay = item.manCategory ? item.manCategory.replace(/,/g, '、') : '未标注品类';
         text += `   【供应品类】${categoryDisplay}\n`;
-
-        // ✨ 修复：使用 manRemark 而非 remark
         if (item.manRemark) {
           text += `   【备注信息】${item.manRemark}\n`;
         }
@@ -236,8 +257,7 @@ const handleExportCommand = async (command) => {
 
       await toClipboard(text);
       ElMessage.success("已按实际档案字段完成复制");
-    } catch (err) {
-      console.error(err);
+    } catch {
       ElMessage.error("复制失败");
     }
   } else if (command === 'copy_full') {
@@ -261,7 +281,6 @@ const handleCopyRow = async (row) => {
   } catch { ElMessage.error("复制失败"); }
 };
 
-// --- 常规业务逻辑 ---
 const formData = reactive({
   id: null, manufacturerName: "", categoryArray: [],
   manContactPerson: "", manContactPhone: "", manContactEmail: "",
@@ -280,6 +299,8 @@ const loadList = async () => {
   try {
     const res = await getManufacturerList();
     tableData.value = res.data || [];
+    // 加载完成后主动触发一次同步
+    syncVendorsToAI();
   } catch { ElMessage.error("数据加载失败"); }
   finally { loading.value = false; }
 };
@@ -342,14 +363,12 @@ onMounted(loadList);
 .header-actions { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
 .page-title { font-size: 1.5rem; color: #333; margin: 0; }
 
-/* 🔍 筛选栏样式 */
 .filter-bar {
   display: flex; gap: 15px; margin-bottom: 20px; background: #fff;
   padding: 15px 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); align-items: center;
 }
 .filter-info { margin-left: auto; font-size: 13px; color: #909399; }
 
-/* 🛠️ 纵向按钮样式 */
 .op-buttons-vertical {
   display: flex;
   flex-direction: column;

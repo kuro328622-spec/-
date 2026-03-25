@@ -37,4 +37,13 @@ public class HStoreInventoryFeedController {
     ) {
         return inventoryService.updateAlertQuantity(id, alertQuantity);
     }
+
+    /**
+     * ✨ 新增：删除饲料库存档案 前端请求: DELETE /api/inventory/feed/delete/{id} 只有管理员可操作（权限建议在
+     * SecurityConfig 或通过注解控制）
+     */
+    @DeleteMapping("/delete/{id}")
+    public void deleteInventory(@PathVariable Long id) {
+        inventoryService.deleteById(id);
+    }
 }

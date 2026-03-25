@@ -148,16 +148,18 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue' // ✨ 增加 watch
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, Plus, Minus, Lock, Share, ArrowDown} from '@element-plus/icons-vue'
+import { Search, Refresh, Plus, Minus, Lock, Share, ArrowDown } from '@element-plus/icons-vue'
 import { getFinancialList, addFinancialRecord, deleteFinancialRecord } from "@/api/financialApi"
 import { useUserStore } from "@/stores/userStore"
 import { exportToExcel } from "@/utils/exportUtils.js"
 import useClipboard from 'vue-clipboard3'
+import { useAIStore } from "@/stores/aiStore" // ✨ 引入 AI Store
 
 const { toClipboard } = useClipboard()
 const userStore = useUserStore()
+const aiStore = useAIStore() // ✨ 初始化 AI Store
 const tableData = ref([])
 const loading = ref(false)
 
@@ -170,6 +172,36 @@ const financeHeaderMap = {
   isAuto: "系统同步(1是/0否)"
 }
 
+// --- AI 数据同步逻辑 ---
+const syncFinanceToAI = () => {
+  if (!tableData.value || tableData.value.length === 0) {
+    aiStore.setPageContext('financeLogs', "目前暂无收支明细记录。");
+    return;
+  }
+
+  // 获取最近的 20 条财务记录，确保 AI 看到最新的账目
+  const recentLogs = [...tableData.value]
+    .sort((a, b) => new Date(b.recordDate) - new Date(a.recordDate))
+    .slice(0, 20);
+
+  // 构建汇总头部，让 AI 对整体财务状况有个底
+  let summary = `[财务概览] 总收入: +￥${totalIncome.value.toFixed(2)} | 总支出: -￥${totalExpense.value.toFixed(2)}\n`;
+  summary += `[近期流水]\n`;
+
+  summary += recentLogs.map((item, index) => {
+    const symbol = item.recordType === '收入' ? '+' : '-';
+    return `${index + 1}. 日期:${item.recordDate} | ${item.recordType} | 内容:${item.category} | 金额:${symbol}￥${item.amount} | 来源:${item.isAuto === 1 ? '系统同步' : '手动'}`;
+  }).join('\n');
+
+  // ✨ 同步到 aiStore 的 financeLogs 字段
+  aiStore.setPageContext('financeLogs', summary);
+};
+
+// ✨ 监听财务数据变化，实时更新 AI 上下文
+watch(tableData, () => {
+  syncFinanceToAI();
+}, { deep: true });
+
 // 获取数据
 const fetchRecords = async () => {
   loading.value = true
@@ -177,6 +209,8 @@ const fetchRecords = async () => {
     const res = await getFinancialList()
     const data = res.data || res
     tableData.value = Array.isArray(data) ? data : []
+    // ✨ 获取成功后立即同步
+    syncFinanceToAI();
   } catch  {
     ElMessage.error('无法加载财务数据')
   } finally { loading.value = false }
@@ -204,7 +238,7 @@ const filteredTableData = computed(() => {
 const handleQuery = () => ElMessage.success('已应用筛选')
 const resetQuery = () => { queryParams.type = ''; queryParams.dateRange = []; fetchRecords() }
 
-// ✨ 复制与导出功能逻辑
+// 复制与导出功能逻辑
 const handleCopyRow = async (row) => {
   try {
     const text = `💰【单笔财务流水明细】\n` +
@@ -274,7 +308,7 @@ const submitFinance = async () => {
     await addFinancialRecord(payload)
     ElMessage.success('录入成功')
     dialogVisible.value = false
-    fetchRecords()
+    fetchRecords() // fetchRecords 内部会触发 syncFinanceToAI
   } catch {
     ElMessage.error('录入失败')
   } finally { loading.value = false }
