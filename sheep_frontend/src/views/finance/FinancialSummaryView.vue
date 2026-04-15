@@ -125,21 +125,28 @@
             <tr><td>日均成本</td><td>￥{{ summary.dailyExpense.toFixed(2) }}</td><td>最大支出项</td><td>{{ summary.topExpenseCategory }}</td></tr>
           </table>
         </div>
-
         <div class="report-section">
           <h3>二、可视化图表分析</h3>
           <div class="report-charts-grid">
-             <div class="report-chart-item">
+              <div class="report-chart-item">
                 <p>收支趋势分析图</p>
                 <img :src="chartImages.line" v-if="chartImages.line" />
-             </div>
-             <div class="report-chart-item">
-                <p>支出占比分析图</p>
+              </div>
+              <div class="report-chart-item">
+                <p>支出分类构成图</p>
                 <img :src="chartImages.pie" v-if="chartImages.pie" />
-             </div>
+              </div>
+
+              <div class="report-chart-item">
+                <p>支出科目排行图</p>
+                <img :src="chartImages.rank" v-if="chartImages.rank" />
+              </div>
+              <div class="report-chart-item">
+                <p>累计利润增长曲线</p>
+                <img :src="chartImages.profitCurve" v-if="chartImages.profitCurve" />
+              </div>
           </div>
         </div>
-
         <div class="report-section">
           <h3>三、AI 智慧诊断结论</h3>
           <div class="markdown-body" v-html="renderedAIReport"></div>
@@ -198,7 +205,12 @@ const summary = reactive({
   topExpenseCategory: '', profitMargin: 0, dailyExpense: 0, days: 0
 })
 
-const chartImages = reactive({ line: '', pie: '' })
+const chartImages = reactive({
+  line: '',
+  pie: '',
+  rank: '',
+  profitCurve: ''
+})
 
 // 图表实例
 let lineChart = null; let pieChart = null; let rankChart = null; let profitCurveChart = null;
@@ -215,11 +227,14 @@ const handleAIDiagnose = async () => {
 
 // --- 报表预览与导出 ---
 const handleOpenReportPreview = () => {
+  // 转换 4 个图表为 Base64 图片
   if (lineChart) chartImages.line = lineChart.getDataURL({ pixelRatio: 2, backgroundColor: '#fff' })
   if (pieChart) chartImages.pie = pieChart.getDataURL({ pixelRatio: 2, backgroundColor: '#fff' })
+  if (rankChart) chartImages.rank = rankChart.getDataURL({ pixelRatio: 2, backgroundColor: '#fff' })
+  if (profitCurveChart) chartImages.profitCurve = profitCurveChart.getDataURL({ pixelRatio: 2, backgroundColor: '#fff' })
 
   if (!aiStore.currentReport) {
-    ElMessage.info("正在同步 AI 诊断结论...")
+    ElMessage.info("正在同步 AI 诊断结论...请耐心等待")
     handleAIDiagnose()
   }
   reportPreviewVisible.value = true
@@ -228,6 +243,8 @@ const handleOpenReportPreview = () => {
 const handlePrintReport = () => {
   const content = document.getElementById('finalReport').innerHTML
   const printWin = window.open('', '_blank')
+
+  // 1. 写入内容
   printWin.document.write(`
     <html>
       <head>
@@ -237,21 +254,39 @@ const handlePrintReport = () => {
           .report-cover { text-align: center; border-bottom: 3px solid #626aef; margin-bottom: 40px; padding-bottom: 20px; }
           .report-section { margin-bottom: 30px; }
           h3 { color: #626aef; border-left: 5px solid #626aef; padding-left: 15px; margin-bottom: 15px; }
-          .report-table { width: 100%; border-collapse: collapse; }
+          .report-table { width: 100%; border-collapse: collapse; margin-bottom: 20px;}
           .report-table td { border: 1px solid #eee; padding: 12px; background: #fafafa; }
-          .report-charts-grid { display: flex; gap: 20px; flex-wrap: wrap; }
-          .report-chart-item { width: 45%; text-align: center; border: 1px solid #eee; padding: 10px; border-radius: 8px; }
-          .report-chart-item img { width: 100%; border-radius: 4px; }
-          .markdown-body table { width: 100%; border-collapse: collapse; }
-          .markdown-body th, .markdown-body td { border: 1px solid #ddd; padding: 8px; }
+          .report-charts-grid { display: flex; gap: 20px; flex-wrap: wrap; justify-content: space-between; }
+          .report-chart-item { width: 45%; text-align: center; border: 1px solid #eee; padding: 10px; border-radius: 8px; page-break-inside: avoid; }
+          .report-chart-item img { width: 100%; height: auto; display: block; margin: 10px auto; }
+          /* 核心：强制打印背景和图形 */
+          * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
         </style>
       </head>
       <body>${content}</body>
     </html>
   `)
+
   printWin.document.close()
-  printWin.print()
-  printWin.onafterprint = () => printWin.close()
+
+  // 2. 核心修复：监听图片加载完成
+  const imgs = printWin.document.getElementsByTagName('img')
+  const promises = Array.from(imgs).map(img => {
+    if (img.complete) return Promise.resolve()
+    return new Promise(resolve => {
+      img.onload = resolve
+      img.onerror = resolve // 报错也继续，防止卡死
+    })
+  })
+
+  // 3. 所有图片加载完后再调用打印
+  Promise.all(promises).then(() => {
+    // 额外给 500ms 渲染缓冲
+    setTimeout(() => {
+      printWin.print()
+      printWin.onafterprint = () => printWin.close()
+    }, 500)
+  })
 }
 
 // --- 业务数据逻辑 ---
