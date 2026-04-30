@@ -3,7 +3,6 @@ import { ref, computed } from "vue";
 import axios from "axios";
 
 export const useAIStore = defineStore("ai", () => {
-  // 1. 定义全局状态对象 (完全保留您的 9 条原始定义)
   const globalContext = ref({
     feedStock: "",
     feedInLogs: "",
@@ -17,22 +16,23 @@ export const useAIStore = defineStore("ai", () => {
     other: "",
   });
 
-  // ✨ 新增：报告生成状态
   const reportLoading = ref(false);
   const currentReport = ref("");
 
-  /**
-   * 2. 设置指定模块的上下文数据
-   */
+  // ✨ 新增：自动提问信号
+  const autoQuestion = ref("");
+
   const setPageContext = (key, contextStr) => {
     if (key in globalContext.value) {
       globalContext.value[key] = contextStr;
     }
   };
 
-  /**
-   * 3. 汇总属性 (完全保留您的 9 条拼接逻辑)
-   */
+  // ✨ 新增：触发自动提问
+  const triggerAutoQuestion = (question) => {
+    autoQuestion.value = question;
+  };
+
   const allContext = computed(() => {
     const ctx = globalContext.value;
     const hasData = Object.values(ctx).some((val) => val && val.trim() !== "");
@@ -62,9 +62,6 @@ ${ctx.other ? "## 其他补充信息\n" + ctx.other : ""}
 `.trim();
   });
 
-  /**
-   * ✨ 新增：调用后端接口生成 AI 报告
-   */
   const generateAIReport = async (type, context) => {
     reportLoading.value = true;
     try {
@@ -83,9 +80,6 @@ ${ctx.other ? "## 其他补充信息\n" + ctx.other : ""}
     }
   };
 
-  /**
-   * 4. 清除方法
-   */
   const clearAllContext = () => {
     globalContext.value = {
       feedStock: "",
@@ -107,7 +101,9 @@ ${ctx.other ? "## 其他补充信息\n" + ctx.other : ""}
     allContext,
     reportLoading,
     currentReport,
+    autoQuestion,
     setPageContext,
+    triggerAutoQuestion,
     generateAIReport,
     clearAllContext,
   };

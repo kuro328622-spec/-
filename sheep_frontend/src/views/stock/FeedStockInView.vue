@@ -19,6 +19,7 @@
               </el-dropdown-menu>
             </template>
           </el-dropdown>
+          <el-button type="primary" color="#626aef" icon="MagicStick" @click="handleAIAnalysis" style="margin-right: 12px">AI 智能分析</el-button>
           <el-button type="primary" icon="Plus" @click="openAddDialog">添加入库记录</el-button>
         </div>
       </div>
@@ -97,7 +98,18 @@
         </el-table>
       </div>
     </div>
-
+    <!-- AI 分析抽屉 -->
+    <el-drawer v-model="showAIDrawer" title="🤖 饲料入库AI 智能分析" size="70%" @open="runAIAnalysis">
+  <div v-loading="aiAnalysisLoading" class="ai-result-container">
+    <div v-if="aiAnalysisResult">
+      <div style="display: flex; justify-content: flex-end; margin-bottom: 12px;">
+        <el-button type="primary" plain size="small" icon="DocumentCopy" @click="copyAIResult">一键复制分析结果</el-button>
+      </div>
+      <div class="markdown-body" v-html="renderedAIResult"></div>
+    </div>
+    <el-empty v-else description="正在分析......" />
+  </div>
+</el-drawer>
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="850px" @close="resetForm">
       <el-form ref="formRef" :model="formData" :rules="formRules" label-width="110px">
         <el-row :gutter="20">
@@ -224,7 +236,8 @@ import { getFeedStockInList, addFeedStockIn, updateFeedStockIn, deleteFeedStockI
 import { exportToExcel } from "@/utils/exportUtils.js";
 import useClipboard from "vue-clipboard3";
 import { useAIStore } from "@/stores/aiStore"; // 引入 store
-
+import { marked } from "marked";
+import axios from "axios";
 // 引入图标（如果你的 template 中使用了这些图标，取消注释即可）
 // import {
 //   ArrowDown, Plus, Search, Refresh, DocumentCopy, Edit, Delete, Share
@@ -241,7 +254,11 @@ const dialogVisible = ref(false);
 const dialogTitle = ref("添加入库记录");
 const formRef = ref(null);
 const isEditMode = ref(false);
-
+// AI分析相关
+const showAIDrawer = ref(false);
+const aiAnalysisLoading = ref(false);
+const aiAnalysisResult = ref("");
+const renderedAIResult = computed(() => aiAnalysisResult.value ? marked(aiAnalysisResult.value) : "");
 const presetComponents = ['玉米', '豆粕', '鱼粉', '麸皮'];
 
 const filterParams = reactive({
@@ -351,7 +368,38 @@ const loadStockInList = async () => {
 const loadManufacturers = async () => {
   allManufacturers.value = [];
 };
-
+// 打开抽屉
+const handleAIAnalysis = () => {
+  aiAnalysisResult.value = "";
+  showAIDrawer.value = true;
+};
+const copyAIResult = async () => {
+  try {
+    await toClipboard(aiAnalysisResult.value);
+    ElMessage.success("分析结果已复制到剪贴板");
+  } catch {
+    ElMessage.error("复制失败，请手动选中复制");
+  }
+};
+// 抽屉打开后自动执行分析
+const runAIAnalysis = async () => {
+  if (!tableData.value || tableData.value.length === 0) {
+    aiAnalysisResult.value = "暂无饲料入库数据，无法进行分析。";
+    return;
+  }
+  aiAnalysisLoading.value = true;
+  try {
+    const context = aiStore.globalContext.value?.feedInLogs || aiStore.allContext;
+    const prompt = `你是一位资深的规模化羊场养殖管理专家。以下是当前羊场的饲料入库记录数据：\n\n${context}\n\n请从以下几个维度进行专业分析并给出建议：\n1. 饲料采购结构分析（品类、数量、频率是否合理）\n2. 成本分析（单价与运费是否合理，有无优化空间）\n3. 品质风险提示（水分、霉变、杂质是否异常）\n4. 批次管理建议（到期日期预警、先进先出建议）\n5. 综合补货建议`;
+    const res = await axios.post('http://localhost:8080/api/ai/chat', { message: prompt });
+    const data = res.data;
+    aiAnalysisResult.value = data?.choices?.[0]?.message?.content || data?.content || '未收到有效回复';
+  } catch {
+    aiAnalysisResult.value = "AI分析服务暂时不可用，请稍后重试。";
+  } finally {
+    aiAnalysisLoading.value = false;
+  }
+};
 // --- 操作函数 ---
 const openAddDialog = () => {
   isEditMode.value = false;
@@ -520,4 +568,10 @@ onMounted(() => {
 .op-buttons-vertical .el-button { width: 80px; margin-left: 0 !important; }
 .table-container { flex: 1; overflow-x: auto; }
 .dialog-footer { display: flex; justify-content: flex-end; gap: 12px; }
+.ai-result-container { padding: 20px; line-height: 1.8; }
+.markdown-body h2 { color: #303133; font-size: 16px; margin: 16px 0 8px; border-bottom: 1px solid #eee; padding-bottom: 4px; }
+.markdown-body h3 { color: #409EFF; font-size: 14px; margin: 12px 0 6px; }
+.markdown-body ul { padding-left: 20px; }
+.markdown-body li { margin: 4px 0; }
+.markdown-body strong { color: #303133; }
 </style>

@@ -45,7 +45,7 @@
           <el-button :icon="Refresh" @click="resetQuery">重置</el-button>
           <el-button type="success" :icon="Plus" @click="openDialog('收入')">录入收入</el-button>
           <el-button type="danger" :icon="Minus" @click="openDialog('支出')">录入支出</el-button>
-
+          <el-button type="primary" color="#626aef" icon="MagicStick" @click="handleAIAnalysis" style="margin-left: 12px">AI 智能分析</el-button>
           <el-dropdown trigger="click" @command="handleExportCommand" style="margin-left: 12px">
             <el-button type="warning" :icon="Share">
               导出 / 复制筛选数据<el-icon class="el-icon--right"><arrow-down /></el-icon>
@@ -110,7 +110,17 @@
         </el-table-column>
       </el-table>
     </el-card>
-
+    <el-drawer v-model="showAIDrawer" title="🤖 收支明细 AI 智能分析" size="70%" @open="runAIAnalysis">
+  <div v-loading="aiAnalysisLoading" class="ai-result-container">
+    <div v-if="aiAnalysisResult">
+      <div style="display: flex; justify-content: flex-end; margin-bottom: 12px;">
+        <el-button type="primary" plain size="small" icon="DocumentCopy" @click="copyAIResult">一键复制分析结果</el-button>
+      </div>
+      <div class="markdown-body" v-html="renderedAIResult"></div>
+     </div>
+      <el-empty v-else description="正在分析收支明细数据，请稍候..." />
+    </div>
+  </el-drawer>
     <el-dialog v-model="dialogVisible" :title="'新增' + currentAction" width="450px" @close="resetForm">
       <el-form :model="financeForm" label-width="90px">
         <el-form-item label="发生日期">
@@ -156,13 +166,17 @@ import { useUserStore } from "@/stores/userStore"
 import { exportToExcel } from "@/utils/exportUtils.js"
 import useClipboard from 'vue-clipboard3'
 import { useAIStore } from "@/stores/aiStore" // ✨ 引入 AI Store
-
+import { marked } from "marked";
+import axios from "axios";
 const { toClipboard } = useClipboard()
 const userStore = useUserStore()
 const aiStore = useAIStore() // ✨ 初始化 AI Store
 const tableData = ref([])
 const loading = ref(false)
-
+const showAIDrawer = ref(false);
+const aiAnalysisLoading = ref(false);
+const aiAnalysisResult = ref("");
+const renderedAIResult = computed(() => aiAnalysisResult.value ? marked(aiAnalysisResult.value) : "");
 // Excel 映射表
 const financeHeaderMap = {
   recordDate: "日期",
@@ -171,7 +185,38 @@ const financeHeaderMap = {
   amount: "金额",
   isAuto: "系统同步(1是/0否)"
 }
+const handleAIAnalysis = () => {
+  aiAnalysisResult.value = "";
+  showAIDrawer.value = true;
+};
 
+const copyAIResult = async () => {
+  try {
+    await toClipboard(aiAnalysisResult.value);
+    ElMessage.success("分析结果已复制到剪贴板");
+  } catch {
+    ElMessage.error("复制失败，请手动选中复制");
+  }
+};
+
+const runAIAnalysis = async () => {
+  if (!tableData.value || tableData.value.length === 0) {
+    aiAnalysisResult.value = "暂无收支明细数据，无法进行分析。";
+    return;
+  }
+  aiAnalysisLoading.value = true;
+  try {
+    const context = aiStore.globalContext.value?.financeLogs || aiStore.allContext;
+    const prompt = `你是一位资深的规模化羊场养殖管理专家和财务审计师。以下是当前羊场的收支明细数据：\n\n${context}\n\n请从以下几个维度进行专业分析并给出建议：\n1. 收支结构分析（收入与支出的比例是否健康）\n2. 主要支出项分析（哪类支出占比最高，是否合理）\n3. 盈亏状况评估（当前经营是否盈利，趋势如何）\n4. 异常流水识别（是否存在异常大额支出或收入）\n5. 经营改善建议（如何优化成本结构，提升经营效益）`;
+    const res = await axios.post('http://localhost:8080/api/ai/chat', { message: prompt });
+    const data = res.data;
+    aiAnalysisResult.value = data?.choices?.[0]?.message?.content || data?.content || '未收到有效回复';
+  } catch {
+    aiAnalysisResult.value = "AI分析服务暂时不可用，请稍后重试。";
+  } finally {
+    aiAnalysisLoading.value = false;
+  }
+};
 // --- AI 数据同步逻辑 ---
 const syncFinanceToAI = () => {
   if (!tableData.value || tableData.value.length === 0) {
@@ -355,4 +400,10 @@ const handleDelete = (row) => {
   margin-left: 0 !important;
   width: 70px;
 }
+.ai-result-container { padding: 20px; line-height: 1.8; }
+.markdown-body h2 { color: #303133; font-size: 16px; margin: 16px 0 8px; border-bottom: 1px solid #eee; padding-bottom: 4px; }
+.markdown-body h3 { color: #409EFF; font-size: 14px; margin: 12px 0 6px; }
+.markdown-body ul { padding-left: 20px; }
+.markdown-body li { margin: 4px 0; }
+.markdown-body strong { color: #303133; }
 </style>

@@ -19,6 +19,7 @@
               </el-dropdown-menu>
             </template>
           </el-dropdown>
+          <el-button type="primary" color="#626aef" icon="MagicStick" @click="handleAIAnalysis" style="margin-right: 12px">AI 智能分析</el-button>
           <el-button type="primary" icon="Plus" @click="openAddDialog">添加出库记录</el-button>
         </div>
       </div>
@@ -110,7 +111,17 @@
         </el-table>
       </div>
     </div>
-
+    <el-drawer v-model="showAIDrawer" title="🤖 饲料出库AI 智能分析" size="70%" @open="runAIAnalysis">
+  <div v-loading="aiAnalysisLoading" class="ai-result-container">
+    <div v-if="aiAnalysisResult">
+      <div style="display: flex; justify-content: flex-end; margin-bottom: 12px;">
+        <el-button type="primary" plain size="small" icon="DocumentCopy" @click="copyAIResult">一键复制分析结果</el-button>
+      </div>
+      <div class="markdown-body" v-html="renderedAIResult"></div>
+    </div>
+    <el-empty v-else description="正在分析......" />
+    </div>
+  </el-drawer>
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="650px" @close="resetForm">
       <el-form ref="formRef" :model="formData" :rules="formRules" label-width="120px">
         <el-form-item label="选择库存饲料" v-if="!isEditMode">
@@ -172,7 +183,8 @@ import {
 import { exportToExcel } from "@/utils/exportUtils.js";
 import useClipboard from "vue-clipboard3";
 import { useAIStore } from "@/stores/aiStore"; // ✨ 引入 AI Store
-
+import { marked } from "marked";
+import axios from "axios";
 const { toClipboard } = useClipboard();
 const userStore = useUserStore()
 const aiStore = useAIStore(); // ✨ 初始化 AI Store
@@ -184,6 +196,10 @@ const dialogVisible = ref(false)
 const dialogTitle = ref('饲料出库')
 const formRef = ref(null)
 const isEditMode = ref(false)
+const showAIDrawer = ref(false);
+const aiAnalysisLoading = ref(false);
+const aiAnalysisResult = ref("");
+const renderedAIResult = computed(() => aiAnalysisResult.value ? marked(aiAnalysisResult.value) : "");
 const selectedInventoryId = ref(null)
 const maxAvailable = ref(999999)
 
@@ -355,7 +371,36 @@ const loadStockOutList = async () => {
   } catch { ElMessage.error('获取出库列表失败') }
   finally { loading.value = false }
 }
-
+const handleAIAnalysis = () => {
+  aiAnalysisResult.value = "";
+  showAIDrawer.value = true;
+};
+const copyAIResult = async () => {
+  try {
+    await toClipboard(aiAnalysisResult.value);
+    ElMessage.success("分析结果已复制到剪贴板");
+  } catch {
+    ElMessage.error("复制失败，请手动选中复制");
+  }
+};
+const runAIAnalysis = async () => {
+  if (!tableData.value || tableData.value.length === 0) {
+    aiAnalysisResult.value = "暂无饲料出库数据，无法进行分析。";
+    return;
+  }
+  aiAnalysisLoading.value = true;
+  try {
+    const context = aiStore.globalContext.value?.feedOutLogs || aiStore.allContext;
+    const prompt = `你是一位资深的规模化羊场养殖管理专家。以下是当前羊场的饲料出库记录数据：\n\n${context}\n\n请从以下几个维度进行专业分析并给出建议：\n1. 出库频率与数量分析（消耗规律是否正常）\n2. 用途分布分析（各用途的饲料消耗比例是否合理）\n3. 库存消耗速度预警（按当前消耗速度预估库存可用天数）\n4. 异常出库识别（是否存在异常大量出库记录）\n5. 补货时机建议`;
+    const res = await axios.post('http://localhost:8080/api/ai/chat', { message: prompt });
+    const data = res.data;
+    aiAnalysisResult.value = data?.choices?.[0]?.message?.content || data?.content || '未收到有效回复';
+  } catch {
+    aiAnalysisResult.value = "AI分析服务暂时不可用，请稍后重试。";
+  } finally {
+    aiAnalysisLoading.value = false;
+  }
+};
 const loadInventoryData = async () => {
   try {
     const res = await getFeedInventoryList()
@@ -448,4 +493,10 @@ onMounted(() => { loadStockOutList() })
 .op-buttons-vertical .el-button { width: 80px; margin-left: 0 !important; }
 .table-container { flex: 1; overflow-x: auto; }
 .dialog-footer { display: flex; justify-content: flex-end; gap: 12px; }
+.ai-result-container { padding: 20px; line-height: 1.8; }
+.markdown-body h2 { color: #303133; font-size: 16px; margin: 16px 0 8px; border-bottom: 1px solid #eee; padding-bottom: 4px; }
+.markdown-body h3 { color: #409EFF; font-size: 14px; margin: 12px 0 6px; }
+.markdown-body ul { padding-left: 20px; }
+.markdown-body li { margin: 4px 0; }
+.markdown-body strong { color: #303133; }
 </style>
